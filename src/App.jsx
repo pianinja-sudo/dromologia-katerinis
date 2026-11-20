@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } 
 import { Plus, X, ChevronLeft, ChevronRight, ChevronDown, Users, CalendarDays, Moon, Sun, Printer, FileSpreadsheet, History, RotateCcw, LogOut } from "lucide-react";
 import { auth, db, subscribeToChanges } from "./storage";
 import Login from "./Login";
+import CarLogo from "./CarLogo";
 import { SPECIAL_DAYS } from "./holidays";
-import { exportMonthXlsx, printMonth } from "./exporters";
+import { exportMonthXlsx, exportYearXlsx, printMonth, printYear } from "./exporters";
 
 // -- Σχολικό έτος: Σεπτέμβριος 2026 → Ιούνιος 2027 --
 const MONTHS = [
@@ -19,7 +20,12 @@ const MONTHS = [
   { y: 2027, m: 6, label: "Ιούνιος", dark: "#2E2A08", darkSoft: "#4A4310", accent: "#F0C419", light: "#FCF3C4" },
 ];
 
-const DAY_LABELS = ["Δε", "Τρ", "Τε", "Πε", "Πα", "Σα", "Κυ"];
+const DAY_LABELS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"];
+// Απαλό χρώμα φόντου ανά μήνα (φθινόπωρο πιο ζεστό, άνοιξη πιο δροσερό)
+const TINTS = ["#FBEFD9", "#FBE6D6", "#EDE6F7", "#DFEBF8", "#E3EBF7", "#E8E6F6", "#E3F3E8", "#E6F4DC", "#DDF3EC", "#FFF3D1"];
+const MEDALS = ["🏆", "🥈", "🥉"];
+const ACC_LIGHT = "#2F6FED";
+const ACC_DARK = "#5B8DF5";
 
 const DRIVER_COLORS = [
   { bg: "#FFF4D6", ink: "#8A5A00", dash: "#F2B705" },
@@ -38,22 +44,24 @@ const DRIVER_COLORS = [
 
 // Χρώματα διεπαφής για φωτεινό / σκούρο θέμα (οι κάρτες και τα πεδία· το φόντο έχει δικό του θέμα ανά μήνα)
 const UI_LIGHT = {
-  card: "#FFFFFF", cardBorder: "rgba(35,38,43,0.08)", cardShadow: "0 4px 16px rgba(35,38,43,0.12)",
-  ink: "#23262B", ink2: "#4A4D54", muted: "#8A8D95", faint: "#C7C3B5", hint: "#B7B2A0",
-  pop: "#FFFDF8", popBorder: "#EDE8D9", field: "#FFFFFF", fieldBorder: "#E6E2D4",
-  chip: "#F3F1EA", chipInk: "#5B5748", chipOff: "#F7F6F1", chipOffInk: "#C7C3B5",
-  panel: "#F9F8F4", panelBorder: "#EFEDE6", rule: "#EFEDE6", cellShadow: "0 2px 8px rgba(35,38,43,0.10)",
+  bg: "#F5F6F8", card: "#FFFFFF", cardBorder: "#E6E8EE", cardShadow: "0 2px 10px rgba(31,36,48,0.06)",
+  ink: "#1F2430", ink2: "#3A4152", muted: "#5F6675", faint: "#A3A9B8", hint: "#8A91A3",
+  pop: "#FFFFFF", popBorder: "#DDE0E8", field: "#FFFFFF", fieldBorder: "#DDE0E8",
+  chip: "#F1F3F7", chipInk: "#3A4152", chipOff: "#F7F8FA", chipOffInk: "#A3A9B8",
+  panel: "#EEF0F4", panelBorder: "#E6E8EE", rule: "#EEF0F4", cellShadow: "0 1px 2px rgba(31,36,48,0.05)",
+  todayBg: "#F2F6FF", wknd: "#EFF1F5", hol: "#E3E6EC", rowOn: "#EEF3FF", tintPct: 100, tintPct2: 45,
 };
 const UI_DARK = {
-  card: "#1F2331", cardBorder: "rgba(255,255,255,0.08)", cardShadow: "0 4px 16px rgba(0,0,0,0.35)",
-  ink: "#ECEDF0", ink2: "#C5C8D0", muted: "#9AA0AE", faint: "#5A6072", hint: "#7A8092",
-  pop: "#272C3D", popBorder: "#3A4156", field: "#1A1E2B", fieldBorder: "#3A4156",
-  chip: "#2D3347", chipInk: "#C9CCD8", chipOff: "#232837", chipOffInk: "#5A6072",
-  panel: "#232838", panelBorder: "#2F3548", rule: "#2F3548", cellShadow: "0 2px 8px rgba(0,0,0,0.35)",
+  bg: "#14171F", card: "#1C2029", cardBorder: "#2A3040", cardShadow: "0 2px 10px rgba(0,0,0,0.35)",
+  ink: "#ECEEF3", ink2: "#C5C9D4", muted: "#A3AABB", faint: "#5E667A", hint: "#7E869A",
+  pop: "#232837", popBorder: "#343B4E", field: "#171B24", fieldBorder: "#343B4E",
+  chip: "#262C3B", chipInk: "#C9CCD8", chipOff: "#1F2430", chipOffInk: "#5E667A",
+  panel: "#222735", panelBorder: "#2A3040", rule: "#2A3040", cellShadow: "0 1px 2px rgba(0,0,0,0.3)",
+  todayBg: "#1D2740", wknd: "#181C25", hol: "#2A3040", rowOn: "#222B42", tintPct: 16, tintPct2: 7,
 };
 const UIContext = React.createContext(UI_LIGHT);
 
-const COL_WIDTH = 122;
+const COL_WIDTH = 150;
 
 function pad(n) {
   return String(n).padStart(2, "0");
@@ -296,7 +304,7 @@ function DayPopover({ dKey, theme, dayEntries, canonicalOf, numbered, palette, k
 // ---------------------------------------------------------------------------
 // DayCell — memoized. Το popover ζει ΜΕΣΑ σε αυτό (position: relative στο κελί).
 // ---------------------------------------------------------------------------
-const DayCell = React.memo(function DayCell({ d, dKey, isToday, isSelected, isWeekend, special, alignRight, dayEntries, theme, canonicalOf, numbered, palette, knownDrivers, onOpen, onAdd, onRemove, onClose }) {
+const DayCell = React.memo(function DayCell({ d, dKey, isToday, isSelected, isWeekend, special, alignRight, dayEntries, theme, canonicalOf, numbered, palette, knownDrivers, hl, onOpen, onAdd, onRemove, onClose }) {
   const ui = useContext(UIContext);
   const closed = special && special.type === "closed";
   return (
@@ -305,62 +313,60 @@ const DayCell = React.memo(function DayCell({ d, dKey, isToday, isSelected, isWe
         className="daycell"
         onClick={() => onOpen(dKey)}
         style={{
-          minHeight: 128,
-          borderRadius: 13,
-          border: isSelected ? `2px solid ${theme.accent}` : isToday ? `2px solid ${theme.accent}` : `1px solid ${ui.cardBorder}`,
-          background: closed ? `repeating-linear-gradient(135deg, ${ui.card} 0 9px, ${ui.panel} 9px 18px)` : ui.card,
-          boxShadow: isSelected ? `0 0 0 3px ${theme.accent}77` : isToday ? `0 0 0 4px ${theme.accent}66, 0 6px 16px rgba(0,0,0,0.18)` : ui.cellShadow,
-          padding: "8px 7px 8px",
+          minHeight: 118,
+          borderRadius: 14,
+          border: isSelected || isToday ? `2px solid ${theme.accent}` : `1px solid ${ui.cardBorder}`,
+          background: closed ? `repeating-linear-gradient(135deg, ${ui.card} 0 9px, ${ui.panel} 9px 18px)` : isToday ? ui.todayBg : isWeekend ? ui.wknd : ui.card,
+          boxShadow: isSelected ? `0 0 0 3px ${theme.accent}55` : isToday ? `0 0 0 4px ${theme.accent}30, 0 6px 16px ${theme.accent}30` : ui.cellShadow,
+          padding: "8px",
           display: "flex",
           flexDirection: "column",
-          gap: 5,
+          gap: 6,
           cursor: "pointer",
+          boxSizing: "border-box",
+          minWidth: 0,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 1px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span
-              style={{
-                fontSize: 14,
-                fontWeight: isToday ? 800 : 600,
-                color: isToday ? "#FFFFFF" : ui.ink2,
-                background: isToday ? theme.accent : "transparent",
-                borderRadius: 20,
-                minWidth: 22,
-                height: 22,
-                lineHeight: "22px",
-                textAlign: "center",
-                padding: isToday ? "0 4px" : 0,
-              }}
-            >
-              {d}
-            </span>
-            {isToday && <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: theme.accent }}>ΣΗΜΕΡΑ</span>}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            {isWeekend && <span style={{ width: 5, height: 5, borderRadius: 5, background: theme.accent }} title="Σαββατοκύριακο" />}
-            <Plus size={13} strokeWidth={2.5} color={ui.faint} />
-          </div>
-        </div>
-
-        {special && (
-          <div
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, minHeight: 24 }}>
+          <span
             style={{
-              alignSelf: "flex-start",
-              fontSize: 9.5,
+              fontSize: 13,
               fontWeight: 700,
-              borderRadius: 6,
-              padding: "1px 6px",
-              background: closed ? "#E1483A22" : `${theme.accent}33`,
-              color: closed ? "#C0392B" : ui.ink2,
+              color: isToday ? "#FFFFFF" : ui.ink,
+              background: isToday ? theme.accent : "transparent",
+              borderRadius: 12,
+              minWidth: 24,
+              height: 24,
+              lineHeight: "24px",
+              textAlign: "center",
+              padding: isToday ? "0 4px" : 0,
             }}
           >
-            {closed ? "🚫 " : "🎼 "}
-            {special.label}
-          </div>
-        )}
+            {d}
+          </span>
+          {special ? (
+            <span
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                borderRadius: 7,
+                padding: "2px 6px",
+                background: closed ? "#E1483A22" : ui.hol,
+                color: closed ? "#C0392B" : ui.muted,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                minWidth: 0,
+              }}
+            >
+              {special.label}
+            </span>
+          ) : (
+            <Plus size={13} strokeWidth={2.5} color={ui.faint} />
+          )}
+        </div>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {dayEntries.map((e) => {
             const canon = canonicalOf(e.driver);
             const c = colorFor(canon, palette);
@@ -368,18 +374,21 @@ const DayCell = React.memo(function DayCell({ d, dKey, isToday, isSelected, isWe
               <div
                 key={e.id}
                 style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                   background: c.bg,
                   color: c.ink,
-                  borderRadius: 20,
-                  padding: "3.5px 9px",
-                  fontSize: 11.5,
-                  fontWeight: 700,
-                  lineHeight: 1.3,
-                  whiteSpace: "nowrap",
-                  border: `1px solid ${c.dash}55`,
+                  borderRadius: 9,
+                  padding: "3px 7px 3px 6px",
+                  minWidth: 0,
+                  opacity: hl && hl !== canon ? 0.25 : 1,
+                  transition: "opacity .18s",
                 }}
               >
-                {canon} {numbered[e.id]}
+                <span style={{ flex: "none", width: 7, height: 7, borderRadius: "50%", background: c.dash }} />
+                <span style={{ flex: "1 1 0", minWidth: 0, fontSize: 12.5, fontWeight: 500, lineHeight: 1.25, overflowWrap: "anywhere" }}>{canon}</span>
+                <span style={{ flex: "none", fontSize: 12, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{numbered[e.id]}</span>
               </div>
             );
           })}
@@ -466,7 +475,7 @@ function OffsetForm({ knownDrivers, driverOffsets, onSave, theme }) {
 function Card({ icon, title, open, onToggle, children }) {
   const ui = useContext(UIContext);
   return (
-    <div style={{ margin: "14px 14px 0", background: ui.card, border: `1px solid ${ui.cardBorder}`, boxShadow: ui.cardShadow, borderRadius: 14, padding: "12px 16px", color: ui.ink }}>
+    <div style={{ margin: "14px 16px 0", background: ui.card, border: `1px solid ${ui.cardBorder}`, boxShadow: ui.cardShadow, borderRadius: 18, padding: "14px 18px", color: ui.ink }}>
       <button onClick={onToggle} style={{ width: "100%", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", gap: 7, cursor: "pointer", color: ui.muted }}>
         {icon}
         <span className="sg" style={{ fontSize: 12.5, fontWeight: 600, color: ui.muted, flex: 1, textAlign: "left" }}>{title}</span>
@@ -512,8 +521,19 @@ function Calendar({ actor, onSignOut, onRename }) {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState(null); // { msg, undoId }
-  const [dark, setDark] = useState(() => lsGet("dk-dark") === "1");
+  const [dark, setDark] = useState(() => {
+    const saved = lsGet("dk-dark");
+    if (saved === "1") return true;
+    if (saved === "0") return false;
+    try {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    } catch (e) {
+      return false;
+    }
+  });
   const [open, setOpen] = useState({ month: true, year: true, history: false, data: false });
+  const [hl, setHl] = useState(""); // οδηγός που φωτίζεται στο ημερολόγιο
+  const [scope, setScope] = useState("month"); // "month" | "year" για τις εξαγωγές
   const [history, setHistory] = useState([]);
   const [backups, setBackups] = useState(null);
   const [installEvt, setInstallEvt] = useState(null);
@@ -525,11 +545,7 @@ function Calendar({ actor, onSignOut, onRename }) {
   });
   const [selectedDay, setSelectedDay] = useState(null);
   const [offsetPanelOpen, setOffsetPanelOpen] = useState(false);
-  const weekdayInnerRef = useRef(null);
-  const weekdayFixedInnerRef = useRef(null);
-  const weekdayPlaceholderRef = useRef(null);
   const gridScrollRef = useRef(null);
-  const [fixedHeaderVisible, setFixedHeaderVisible] = useState(false);
 
   const entriesRef = useRef([]);
   const offsetsRef = useRef({});
@@ -555,29 +571,6 @@ function Calendar({ actor, onSignOut, onRename }) {
       return !v;
     });
   };
-
-  const syncWeekdayHeader = useCallback(() => {
-    if (gridScrollRef.current) {
-      const x = gridScrollRef.current.scrollLeft;
-      if (weekdayInnerRef.current) weekdayInnerRef.current.style.transform = `translateX(-${x}px)`;
-      if (weekdayFixedInnerRef.current) weekdayFixedInnerRef.current.style.transform = `translateX(-${x}px)`;
-    }
-  }, []);
-
-  useEffect(() => {
-    const onScroll = () => {
-      if (!weekdayPlaceholderRef.current) return;
-      const rect = weekdayPlaceholderRef.current.getBoundingClientRect();
-      setFixedHeaderVisible(rect.top <= 0);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  useEffect(() => {
-    if (fixedHeaderVisible) syncWeekdayHeader();
-  }, [fixedHeaderVisible, syncWeekdayHeader]);
 
   const openDay = useCallback((dKey) => {
     setSelectedDay((prev) => (prev === dKey ? null : dKey));
@@ -773,6 +766,18 @@ function Calendar({ actor, onSignOut, onRename }) {
     driverOffsets,
   });
 
+  const entriesOfMonth = (mo) => entries.filter((e) => e.date.startsWith(`${mo.y}-${pad(mo.m)}`));
+  const exportJSONMonth = (mo) => {
+    const payload = {
+      app: "dromologia-katerinis",
+      partial: true,
+      note: "Μόνο ένας μήνας — δεν κάνει για εισαγωγή. Για εισαγωγή χρησιμοποίησε το αντίγραφο όλης της χρονιάς.",
+      exportedAt: new Date().toISOString(),
+      entries: entriesOfMonth(mo).map(({ id, date, driver, ts }) => ({ id, date, driver, ts })),
+    };
+    downloadFile(`dromologia-${mo.y}-${pad(mo.m)}.json`, JSON.stringify(payload, null, 2), "application/json");
+  };
+
   const exportJSON = () => {
     downloadFile(`dromologia-antigrafo-${todayStamp()}.json`, JSON.stringify(buildPayload(), null, 2), "application/json");
   };
@@ -815,6 +820,10 @@ function Calendar({ actor, onSignOut, onRename }) {
     reader.onload = async () => {
       try {
         const data = JSON.parse(String(reader.result));
+        if (data && data.partial) {
+          window.alert("Αυτό το αρχείο έχει μόνο έναν μήνα και δεν κάνει για εισαγωγή. Διάλεξε αντίγραφο όλης της χρονιάς.");
+          return;
+        }
         if (!data || !Array.isArray(data.entries)) throw new Error("invalid");
         const seen = new Set();
         const imported = [];
@@ -910,7 +919,8 @@ function Calendar({ actor, onSignOut, onRename }) {
     return { numbered, canonicalOf, byDate, totals, knownDrivers, palette };
   }, [entries, driverOffsets]);
 
-  const theme = MONTHS[monthIdx];
+  const baseTheme = MONTHS[monthIdx];
+  const theme = { ...baseTheme, accent: dark ? ACC_DARK : ACC_LIGHT, dark: ui.ink };
   const { y, m, label } = theme;
 
   const monthTotals = useMemo(() => {
@@ -950,14 +960,29 @@ function Calendar({ actor, onSignOut, onRename }) {
     return dateKey(t.getFullYear(), t.getMonth() + 1, t.getDate());
   })();
 
-  // Δεδομένα μήνα για Excel / PDF
-  const monthExport = () => {
+  // Δεδομένα ενός μήνα για Excel / PDF
+  const buildMonth = (mo) => {
+    const nD = daysInMonth(mo.y, mo.m);
+    const lead = mondayIndex(mo.y, mo.m, 1);
+    const cs = [];
+    for (let i = 0; i < lead; i++) cs.push(null);
+    for (let d = 1; d <= nD; d++) cs.push(d);
+    while (cs.length % 7 !== 0) cs.push(null);
+    const prefix = `${mo.y}-${pad(mo.m)}`;
+    const mt = {};
+    Object.entries(byDate).forEach(([date, list]) => {
+      if (!date.startsWith(prefix)) return;
+      list.forEach((e) => {
+        const c = canonicalOf(e.driver);
+        mt[c] = (mt[c] || 0) + 1;
+      });
+    });
     const weeks = [];
-    for (let i = 0; i < cells.length; i += 7) {
+    for (let i = 0; i < cs.length; i += 7) {
       weeks.push(
-        cells.slice(i, i + 7).map((d) => {
+        cs.slice(i, i + 7).map((d) => {
           if (d === null) return null;
-          const k = dateKey(y, m, d);
+          const k = dateKey(mo.y, mo.m, d);
           return {
             d,
             note: SPECIAL_DAYS[k] ? SPECIAL_DAYS[k].label : "",
@@ -966,8 +991,36 @@ function Calendar({ actor, onSignOut, onRename }) {
         })
       );
     }
-    const rows = knownDrivers.map((d) => ({ name: d, month: monthTotals[d] || 0, year: totals[d] || 0 }));
-    return { label, y, m, weeks, rows };
+    const rows = knownDrivers.map((d) => ({ name: d, month: mt[d] || 0, year: totals[d] || 0 }));
+    return { label: mo.label, y: mo.y, m: mo.m, weeks, rows };
+  };
+  const monthExport = () => buildMonth(theme);
+  const yearExport = () => {
+    const months = MONTHS.map(buildMonth);
+    const head = ["Οδηγός", ...MONTHS.map((mo) => mo.label), "Σύνολο έτους"];
+    const rows = knownDrivers.map((d, i) => [d, ...months.map((mm) => mm.rows[i].month), totals[d] || 0]);
+    const trips = Object.keys(byDate)
+      .sort()
+      .flatMap((date) => byDate[date].map((e) => [date, canonicalOf(e.driver), numbered[e.id]]));
+    return { months, totals: { head, rows }, trips };
+  };
+  const failXlsx = () => window.alert("Η δημιουργία του Excel απέτυχε.");
+  const saveJSON = () => (scope === "year" ? exportJSON() : exportJSONMonth(theme));
+  const saveXlsx = () => {
+    if (scope === "year") {
+      const yd = yearExport();
+      exportYearXlsx(yd.months, yd.totals, yd.trips, `dromologia-2026-2027.xlsx`).catch(failXlsx);
+    } else {
+      exportMonthXlsx(monthExport(), `dromologia-${y}-${pad(m)}.xlsx`).catch(failXlsx);
+    }
+  };
+  const savePdf = () => {
+    if (scope === "year") {
+      const yd = yearExport();
+      printYear(yd.months, yd.totals);
+    } else {
+      printMonth(monthExport());
+    }
   };
 
   // Κουμπί "Σήμερα"
@@ -1025,9 +1078,21 @@ function Calendar({ actor, onSignOut, onRename }) {
 
   const toggle = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
-  const bg = dark
-    ? `linear-gradient(175deg, ${theme.dark} 0%, #12141C 38%, #0E1016 100%)`
-    : `linear-gradient(175deg, ${theme.dark} 0%, ${theme.darkSoft} 16%, ${theme.accent} 46%, ${theme.light} 78%, ${theme.light} 100%)`;
+  const tint = TINTS[monthIdx];
+  const bg = `linear-gradient(180deg, color-mix(in srgb, ${tint} ${ui.tintPct}%, ${ui.bg}) 0, color-mix(in srgb, ${tint} ${ui.tintPct2}%, ${ui.bg}) 280px, ${ui.bg} 620px)`;
+
+  // Πρόοδος του μήνα (σε σχέση με σήμερα)
+  const monthProgress = (() => {
+    const [ty, tm, td] = todayKey.split("-").map(Number);
+    const diff = (ty - y) * 12 + (tm - m);
+    if (diff > 0) return 100;
+    if (diff < 0) return 0;
+    return Math.round((td / daysInMonth(y, m)) * 100);
+  })();
+  const monthTripsCount = Object.values(monthTotals).reduce((a, b) => a + b, 0);
+  const yearTripsCount = Object.values(byDate).reduce((a, l) => a + l.length, 0);
+  const rankedRows = [...balance.rows].sort((a, b) => b.year - a.year || a.name.localeCompare(b.name, "el"));
+  const rankValues = [...new Set(rankedRows.map((r) => r.year))].sort((a, b) => b - a);
 
   const actionLabel = (h) => {
     const who = h.actor || "Κάποιος";
@@ -1055,7 +1120,9 @@ function Calendar({ actor, onSignOut, onRename }) {
         style={{
           position: "relative",
           minHeight: "100vh",
-          background: bg,
+          backgroundColor: ui.bg,
+          backgroundImage: bg,
+          backgroundRepeat: "no-repeat",
           transition: "background 0.5s ease",
           fontFamily: "'Inter', system-ui, sans-serif",
           color: ui.ink,
@@ -1065,94 +1132,75 @@ function Calendar({ actor, onSignOut, onRename }) {
         onClick={closeAll}
       >
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
-          .sg { font-family: 'Space Grotesk', sans-serif; }
-          .daycell { transition: box-shadow .15s ease; }
-          input:focus { outline: none; box-shadow: 0 0 0 3px rgba(0,0,0,0.08); }
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+          .sg { font-family: 'Inter', system-ui, sans-serif; }
+          .daycell { transition: transform .15s ease, box-shadow .15s ease; }
+          .daycell:hover { transform: translateY(-2px); }
+          input:focus { outline: none; box-shadow: 0 0 0 3px rgba(47,111,237,0.2); }
+          button:focus-visible { outline: 3px solid ${ui.ink}; outline-offset: 2px; }
           .hscroll::-webkit-scrollbar { height: 7px; }
-          .hscroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.4); border-radius: 10px; }
-          .hscroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.12); border-radius: 10px; }
+          .hscroll::-webkit-scrollbar-thumb { background: ${ui.faint}; border-radius: 10px; }
+          .hscroll::-webkit-scrollbar-track { background: ${ui.panel}; border-radius: 10px; }
+          .hintm { display: none; }
+          @media (max-width: 1130px) { .hintm { display: block; } }
+          @media (prefers-reduced-motion: reduce) { .daycell { transition: none; } .daycell:hover { transform: none; } }
         `}</style>
 
-        <div
-          aria-hidden="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 0,
-            pointerEvents: "none",
-            backgroundImage: `repeating-linear-gradient(
-                to bottom,
-                rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, transparent 1px, transparent 11px,
-                rgba(255,255,255,0.05) 11px, rgba(255,255,255,0.05) 12px, transparent 12px, transparent 22px,
-                rgba(255,255,255,0.05) 22px, rgba(255,255,255,0.05) 23px, transparent 23px, transparent 33px,
-                rgba(255,255,255,0.05) 33px, rgba(255,255,255,0.05) 34px, transparent 34px, transparent 44px,
-                rgba(255,255,255,0.05) 44px, rgba(255,255,255,0.05) 45px, transparent 45px, transparent 150px
-              )`,
-          }}
-        />
-        <div aria-hidden="true" className="sg" style={{ position: "fixed", top: "-4%", right: "-3%", fontSize: 340, color: "#FFFFFF", opacity: 0.06, transform: "rotate(8deg)", zIndex: 0, pointerEvents: "none", lineHeight: 1 }}>
-          𝄞
-        </div>
-        <div aria-hidden="true" className="sg" style={{ position: "fixed", bottom: "10%", left: "-4%", fontSize: 220, color: theme.dark, opacity: 0.06, transform: "rotate(-6deg)", zIndex: 0, pointerEvents: "none", lineHeight: 1 }}>
-          𝄞
-        </div>
-
-        <div style={{ position: "relative", zIndex: 1 }}>
-          {/* Header */}
-          <div style={{ padding: "22px 20px 16px" }} onClick={(ev) => ev.stopPropagation()}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 3px 10px rgba(0,0,0,0.2)", flexShrink: 0 }}>
-                <span style={{ fontSize: 22, lineHeight: 1 }}>🚗</span>
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="sg" style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.2, color: "#FFFFFF", textShadow: "0 1px 6px rgba(0,0,0,0.25)", lineHeight: 1.15 }}>
-                  Δρομολόγια Μετακινήσεων Κατερίνης
+        <div style={{ position: "relative", zIndex: 1, maxWidth: 1240, margin: "0 auto" }}>
+          {/* Κεφαλίδα */}
+          <div style={{ padding: "22px 16px 12px" }} onClick={(ev) => ev.stopPropagation()} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+                <CarLogo size={72} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, color: ui.muted, fontWeight: 500, marginBottom: 4 }}>Δρομολόγια Μετακινήσεων Κατερίνης · 2026–27</div>
+                  <div className="sg" style={{ fontSize: "clamp(28px, 6vw, 40px)", lineHeight: 1.1, fontWeight: 700, letterSpacing: "-0.02em", color: ui.ink }}>
+                    {label} <span style={{ fontWeight: 500, color: ui.hint }}>{y}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, fontSize: 12, color: ui.muted, fontWeight: 500 }}>
+                    <div style={{ width: 150, maxWidth: "35vw", height: 6, borderRadius: 3, background: ui.rule, overflow: "hidden", flexShrink: 0 }}>
+                      <div style={{ width: `${monthProgress}%`, height: "100%", background: theme.accent, borderRadius: 3 }} />
+                    </div>
+                    <span>{monthProgress === 100 ? "Ο μήνας έχει ολοκληρωθεί" : monthProgress === 0 ? "Ο μήνας δεν έχει ξεκινήσει" : `Έχει περάσει το ${monthProgress}% του μήνα`}</span>
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: "#FFFFFFcc", marginTop: 2 }}>Γκρουπ Μετακινήσεων 2026–2027</div>
               </div>
-              <button
-                onClick={toggleDark}
-                aria-label={dark ? "Φωτεινό θέμα" : "Σκούρο θέμα"}
-                title={dark ? "Φωτεινό θέμα" : "Σκούρο θέμα"}
-                style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", color: "#FFFFFF", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
-              >
-                {dark ? <Sun size={18} /> : <Moon size={18} />}
-              </button>
-            </div>
-
-            <div
-              onTouchStart={onTouchStart}
-              onTouchEnd={onTouchEnd}
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(255,255,255,0.22)", borderRadius: 12, padding: "10px 10px", border: "1px solid rgba(255,255,255,0.25)" }}
-            >
-              <button
-                onClick={() => changeMonth(-1)}
-                disabled={monthIdx === 0}
-                style={{ background: "none", border: "none", color: monthIdx === 0 ? "rgba(255,255,255,0.3)" : "#FFFFFF", cursor: monthIdx === 0 ? "default" : "pointer", padding: 6 }}
-              >
-                <ChevronLeft size={22} />
-              </button>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div className="sg" style={{ fontWeight: 700, fontSize: 19, letterSpacing: -0.2, color: "#FFFFFF", textShadow: "0 1px 6px rgba(0,0,0,0.2)" }}>
-                  {label} <span style={{ opacity: 0.7, fontWeight: 500 }}>{y}</span>
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                <div style={{ fontSize: 13.5, color: ui.muted, fontWeight: 500 }}>
+                  <b style={{ color: ui.ink }}>{monthTripsCount}</b> διαδρομές τον μήνα · <b style={{ color: ui.ink }}>{yearTripsCount}</b> όλη τη χρονιά
                 </div>
-                <button
-                  onClick={goToday}
-                  style={{ background: "#FFFFFF", color: theme.dark, border: "none", borderRadius: 20, padding: "4px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
-                >
-                  Σήμερα
-                </button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button
+                    onClick={() => changeMonth(-1)}
+                    disabled={monthIdx === 0}
+                    aria-label="Προηγούμενος μήνας"
+                    style={{ width: 44, height: 44, borderRadius: 12, border: `1px solid ${ui.fieldBorder}`, background: ui.card, color: ui.ink, cursor: monthIdx === 0 ? "default" : "pointer", opacity: monthIdx === 0 ? 0.4 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <button onClick={goToday} style={{ height: 44, padding: "0 18px", borderRadius: 12, border: "none", background: theme.accent, color: "#FFFFFF", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+                    Σήμερα
+                  </button>
+                  <button
+                    onClick={() => changeMonth(1)}
+                    disabled={monthIdx === MONTHS.length - 1}
+                    aria-label="Επόμενος μήνας"
+                    style={{ width: 44, height: 44, borderRadius: 12, border: `1px solid ${ui.fieldBorder}`, background: ui.card, color: ui.ink, cursor: monthIdx === MONTHS.length - 1 ? "default" : "pointer", opacity: monthIdx === MONTHS.length - 1 ? 0.4 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                  <button
+                    onClick={toggleDark}
+                    aria-label={dark ? "Φωτεινό θέμα" : "Σκούρο θέμα"}
+                    title={dark ? "Φωτεινό θέμα" : "Σκούρο θέμα"}
+                    style={{ width: 44, height: 44, borderRadius: 12, border: `1px solid ${ui.fieldBorder}`, background: ui.card, color: ui.ink, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    {dark ? <Sun size={18} /> : <Moon size={18} />}
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={() => changeMonth(1)}
-                disabled={monthIdx === MONTHS.length - 1}
-                style={{ background: "none", border: "none", color: monthIdx === MONTHS.length - 1 ? "rgba(255,255,255,0.3)" : "#FFFFFF", cursor: monthIdx === MONTHS.length - 1 ? "default" : "pointer", padding: 6 }}
-              >
-                <ChevronRight size={22} />
-              </button>
             </div>
-            <div style={{ fontSize: 11, color: "#FFFFFFa0", marginTop: 8, textAlign: "center" }}>← σύρε το ημερολόγιο πλάγια για να δεις όλες τις μέρες →</div>
+            <div className="hintm" style={{ fontSize: 12, color: ui.hint, marginTop: 10 }}>Σύρε το ημερολόγιο αριστερά–δεξιά για να δεις όλη την εβδομάδα →</div>
             {loadError && (
               <div style={{ marginTop: 10, background: "#FCE4E0", color: "#9C3B2E", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ flex: 1 }}>{loadError}</span>
@@ -1161,35 +1209,19 @@ function Calendar({ actor, onSignOut, onRename }) {
             )}
           </div>
 
-          {/* Γραμμή "Δε, Τρ, Τε..." σε κανονική ροή — "placeholder" για το κολλητό (fixed) αντίγραφο. */}
-          <div ref={weekdayPlaceholderRef} style={{ margin: "6px 14px 0", background: theme.dark, borderRadius: 10, overflow: "hidden", boxShadow: "0 4px 10px rgba(0,0,0,0.15)" }}>
-            <div ref={weekdayInnerRef} style={{ display: "grid", gridTemplateColumns: `repeat(7, ${COL_WIDTH}px)`, gap: 8, width: "max-content", padding: "8px 0" }}>
-              {DAY_LABELS.map((d, i) => (
-                <div key={d} style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: i >= 5 ? "#FFFFFF" : "#FFFFFFb0", padding: "2px 0" }}>
-                  {d}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {fixedHeaderVisible && (
-            <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 40, margin: "6px 14px 0", background: theme.dark, borderRadius: 10, overflow: "hidden", boxShadow: "0 4px 10px rgba(0,0,0,0.25)" }}>
-              <div ref={weekdayFixedInnerRef} style={{ display: "grid", gridTemplateColumns: `repeat(7, ${COL_WIDTH}px)`, gap: 8, width: "max-content", padding: "8px 0" }}>
-                {DAY_LABELS.map((d, i) => (
-                  <div key={d} style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: i >= 5 ? "#FFFFFF" : "#FFFFFFb0", padding: "2px 0" }}>
-                    {d}
+          {/* Ημερολόγιο: 7 στήλες, ολόκληρος ο μήνας */}
+          <div className="hscroll" ref={gridScrollRef} style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "4px 0 10px" }}>
+            <div style={{ minWidth: 7 * COL_WIDTH + 6 * 8 + 32, boxSizing: "border-box", padding: "0 16px" }} onClick={(ev) => ev.stopPropagation()}>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(7, minmax(${COL_WIDTH}px, 1fr))`, gap: 8, marginBottom: 8 }}>
+                {DAY_LABELS.map((dl, i) => (
+                  <div key={dl} style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: i >= 5 ? ui.hint : ui.muted, paddingLeft: 6 }}>
+                    {dl}
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Calendar */}
-          <div className="hscroll" ref={gridScrollRef} onScroll={syncWeekdayHeader} style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "6px 0 10px" }}>
-            <div style={{ width: "max-content", paddingLeft: 14, paddingRight: 14 }} onClick={(ev) => ev.stopPropagation()}>
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(7, ${COL_WIDTH}px)`, gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(7, minmax(${COL_WIDTH}px, 1fr))`, gap: 8, alignItems: "stretch" }}>
                 {cells.map((d, idx) => {
-                  if (d === null) return <div key={idx} />;
+                  if (d === null) return <div key={idx} style={{ borderRadius: 14, border: `1px dashed ${ui.fieldBorder}`, minHeight: 60, opacity: 0.6 }} />;
                   const dKey = dateKey(y, m, d);
                   const colIdx = idx % 7;
                   return (
@@ -1208,6 +1240,7 @@ function Calendar({ actor, onSignOut, onRename }) {
                       numbered={numbered}
                       palette={palette}
                       knownDrivers={knownDrivers}
+                      hl={hl}
                       onOpen={openDay}
                       onAdd={addEntry}
                       onRemove={removeEntry}
@@ -1256,30 +1289,38 @@ function Calendar({ actor, onSignOut, onRename }) {
                     "Όλοι είναι πολύ κοντά στον μέσο όρο ✓"
                   )}
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                  {balance.rows.map((r) => {
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "2px 20px" }}>
+                  {rankedRows.map((r) => {
                     const c = colorFor(r.name, palette);
                     const near = Math.abs(r.diff) < 0.75;
                     const pillBg = near ? "#DDF2E4" : r.diff > 0 ? "#FDEFD8" : "#E4E9F7";
                     const pillInk = near ? "#1F6A3A" : r.diff > 0 ? "#8A5F1E" : "#334A8A";
+                    const rk = rankValues.indexOf(r.year);
+                    const on = hl === r.name;
                     return (
-                      <div key={r.name} style={{ display: "grid", gridTemplateColumns: "minmax(70px, 1.1fr) 2fr auto", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: ui.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+                      <button
+                        key={r.name}
+                        onClick={() => setHl(on ? "" : r.name)}
+                        aria-pressed={on}
+                        style={{ display: "grid", gridTemplateColumns: "22px minmax(112px, 1.3fr) minmax(60px, 1fr) auto", alignItems: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "6px 8px", border: "none", borderRadius: 10, background: on ? ui.rowOn : "transparent", color: ui.ink, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+                      >
+                        <span style={{ textAlign: "center", fontSize: 15, lineHeight: 1 }} title={rk < 3 && r.year > 0 ? `Θέση ${rk + 1}` : ""}>{rk < 3 && r.year > 0 ? MEDALS[rk] : ""}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.25, overflowWrap: "anywhere" }}>{r.name}</span>
                         <div style={{ position: "relative", height: 16, background: ui.panel, borderRadius: 8, overflow: "hidden" }}>
                           <div style={{ width: `${(r.year / balance.max) * 100}%`, height: "100%", background: c.dash, borderRadius: 8, transition: "width .3s" }} />
                           <div style={{ position: "absolute", top: 0, bottom: 0, left: `${(balance.avg / balance.max) * 100}%`, width: 2, background: ui.ink, opacity: 0.45 }} title="Μέσος όρος" />
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", minWidth: 96 }}>
-                          <span className="sg" style={{ fontSize: 14, fontWeight: 700, color: ui.ink }}>{r.year}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", minWidth: 90 }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: ui.ink, fontVariantNumeric: "tabular-nums" }}>{r.year}</span>
                           <span style={{ fontSize: 11, fontWeight: 700, background: pillBg, color: pillInk, borderRadius: 20, padding: "2px 8px", minWidth: 34, textAlign: "center" }}>
                             {near ? "✓" : `${r.diff > 0 ? "+" : "−"}${fmtNum(Math.abs(r.diff))}`}
                           </span>
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
-                <div style={{ fontSize: 10.5, color: ui.hint, marginTop: 8 }}>Η κάθετη γραμμή δείχνει τον μέσο όρο. Το ✓ σημαίνει ότι ο οδηγός είναι μέσα σε ±0,75 από αυτόν.</div>
+                <div style={{ fontSize: 10.5, color: ui.hint, marginTop: 8 }}>Η κάθετη γραμμή δείχνει τον μέσο όρο. Το ✓ σημαίνει ότι ο οδηγός είναι μέσα σε ±0,75 από αυτόν. Πάτα έναν οδηγό για να φωτιστούν οι διαδρομές του στο ημερολόγιο. Τα μετάλλια (🏆 🥈 🥉) είναι ένα «ευχαριστώ» σε όσους οδηγούν περισσότερο.</div>
 
                 <div style={{ height: 1, background: ui.rule, margin: "12px 0 10px" }} />
                 <button onClick={() => setOffsetPanelOpen((v) => !v)} style={{ background: "none", border: "none", color: ui.muted, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 5 }}>
@@ -1316,16 +1357,28 @@ function Calendar({ actor, onSignOut, onRename }) {
             </Card>
 
             {/* Δεδομένα & αναφορές */}
-            <Card icon={<span style={{ fontSize: 13 }}>📦</span>} title="Αναφορά μήνα, δεδομένα & αντίγραφα" open={open.data} onToggle={() => toggle("data")}>
-              <div style={{ fontSize: 11.5, color: ui.muted, marginBottom: 8 }}>Αναφορά για τον μήνα που βλέπεις ({label} {y}):</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-                <button onClick={() => printMonth(monthExport())} style={dataBtnStyle}><Printer size={14} /> PDF / Εκτύπωση</button>
-                <button onClick={() => exportMonthXlsx(monthExport(), `dromologia-${y}-${pad(m)}.xlsx`).catch(() => window.alert("Η δημιουργία του Excel απέτυχε."))} style={dataBtnStyle}><FileSpreadsheet size={14} /> Excel (.xlsx)</button>
+            <Card icon={<span style={{ fontSize: 13 }}>📦</span>} title="Αποθήκευση, αναφορές & αντίγραφα" open={open.data} onToggle={() => toggle("data")}>
+              <div style={{ fontSize: 11.5, color: ui.muted, marginBottom: 8 }}>Τι να αποθηκευτεί;</div>
+              <div style={{ display: "inline-flex", background: ui.panel, borderRadius: 10, padding: 3, gap: 3, marginBottom: 12 }}>
+                {[["month", `Αυτός ο μήνας (${label})`], ["year", "Όλη η χρονιά"]].map(([k, t]) => (
+                  <button key={k} onClick={() => setScope(k)} aria-pressed={scope === k} style={{ border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: scope === k ? ui.card : "transparent", color: scope === k ? ui.ink : ui.muted, boxShadow: scope === k ? ui.cellShadow : "none", fontFamily: "inherit" }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                <button onClick={saveXlsx} style={dataBtnStyle}><FileSpreadsheet size={14} /> Excel (.xlsx)</button>
+                <button onClick={savePdf} style={dataBtnStyle}><Printer size={14} /> PDF / Εκτύπωση</button>
+                <button onClick={saveJSON} style={dataBtnStyle}>⬇️ JSON</button>
+              </div>
+              <div style={{ fontSize: 11, color: ui.hint, marginBottom: 14 }}>
+                {scope === "year"
+                  ? "Ολόκληρη η χρονιά: Excel με ένα φύλλο ανά μήνα + σύνολα οδηγών + λίστα δρομολογίων · PDF με μία σελίδα ανά μήνα · JSON = πλήρες αντίγραφο ασφαλείας."
+                  : "Μόνο ο μήνας που βλέπεις. Το JSON ενός μήνα είναι για αρχείο και δεν κάνει για εισαγωγή."}
               </div>
 
-              <div style={{ fontSize: 11.5, color: ui.muted, marginBottom: 8 }}>Όλα τα δεδομένα — κράτα αντίγραφο ή μετέφερέ τα αλλού:</div>
+              <div style={{ fontSize: 11.5, color: ui.muted, marginBottom: 8 }}>Αντίγραφα ασφαλείας και μεταφορά:</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <button onClick={exportJSON} style={dataBtnStyle}>⬇️ Αντίγραφο (JSON)</button>
                 <button onClick={exportCSV} style={dataBtnStyle}>⬇️ Όλο το έτος (CSV)</button>
                 <button onClick={() => fileInputRef.current?.click()} style={dataBtnStyle}>⬆️ Εισαγωγή αντιγράφου</button>
               </div>
@@ -1369,7 +1422,7 @@ function Calendar({ actor, onSignOut, onRename }) {
               )}
             </Card>
 
-            <div style={{ margin: "18px 14px 10px", textAlign: "center", fontSize: 12, color: dark ? ui.muted : "#FFFFFFcc", display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div style={{ margin: "18px 14px 10px", textAlign: "center", fontSize: 12, color: ui.muted, display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
               <span>Συνδεδεμένος ως <b>{actor}</b></span>
               <button onClick={onRename} style={{ background: "none", border: "none", color: "inherit", textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0 }}>Αλλαγή ονόματος</button>
               <button onClick={onSignOut} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 12, padding: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -1378,7 +1431,7 @@ function Calendar({ actor, onSignOut, onRename }) {
             </div>
           </div>
 
-          {!loaded && <div style={{ textAlign: "center", padding: 20, color: "#FFFFFFcc", fontSize: 12.5 }}>Φόρτωση...</div>}
+          {!loaded && <div style={{ textAlign: "center", padding: 20, color: ui.muted, fontSize: 12.5 }}>Φόρτωση...</div>}
         </div>
 
         {toast && (
@@ -1427,7 +1480,7 @@ export default function App() {
   }, []);
 
   if (session === undefined) {
-    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#10233F", color: "#FFFFFFcc", fontFamily: "system-ui, sans-serif" }}>Φόρτωση...</div>;
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F5F6F8", color: "#5F6675", fontFamily: "system-ui, sans-serif" }}>Φόρτωση...</div>;
   }
   if (!session) {
     return (

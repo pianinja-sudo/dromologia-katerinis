@@ -1,4 +1,4 @@
-# Δρομολόγια Μετακινήσεων Κατερίνης (v2)
+# Δρομολόγια Μετακινήσεων Κατερίνης (v3)
 
 React + Vite + Supabase, δημοσιευμένο στο GitHub Pages.
 
@@ -7,7 +7,7 @@ React + Vite + Supabase, δημοσιευμένο στο GitHub Pages.
 - `src/storage.js` — όλη η επικοινωνία με το Supabase + ο κοινός λογαριασμός ομάδας (`SHARED_EMAIL`)
 - `src/Login.jsx` — οθόνη εισόδου (όνομα + κλειδί ομάδας). Κανονικά οι συνάδελφοι μπαίνουν από λινκ της μορφής `…/#k=ΚΛΕΙΔΙ`, οπότε δεν πληκτρολογούν τίποτα εκτός από το όνομά τους.
 - `src/holidays.js` — αργίες/ημέρες χωρίς μάθημα (ενδεικτικές, διόρθωσέ τες)
-- `src/exporters.js` — Excel και PDF μήνα
+- `src/exporters.js` — Excel και PDF (μήνας ή όλη η χρονιά)
 - `public/` — εικονίδια, manifest και service worker (εγκατάσταση στο κινητό)
 - `supabase_schema_v2.sql` — το script της βάσης (τρέχει στο Supabase → SQL Editor)
 
